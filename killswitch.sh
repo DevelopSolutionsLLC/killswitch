@@ -1,6 +1,6 @@
-#!/bin/bash
+#!/bin/sh
 #
-# /usr/sbin/killswitch.sh v 0.01
+# /usr/sbin/killswitch.sh
 #
 # Copyright (C) 2018 Free Software Foundation, Inc.
 # This is free software.  You may redistribute copies of it under the terms of
@@ -9,107 +9,296 @@
 #
 # Written by Victor T. Chevalier
 #
-# Designed for use with openvpn on Ubuntu 18.04/16.04 LTS
+# Designed for use with OpenVPN on Debian-family Linux distributions.
 #
-INPUT=$@                              # Grab input
-SETUP="no"                            # change to yes after updating script
-NET_DEV="eth0"                        # Default etwork device
+# User configuration
+SETUP="no"                            # Change to yes after updating script
+NET_DEV="eth0"                        # Physical network interface
 LOCAL_NET="192.168.0.0/24"            # Local network subnet
-NET_TUN="tun0"                        # VPN connection device
-PORT=443                              # Port used by VPN
-SERVICE="apache2"                     # Service used with openvpn
-VPN_IP=""                             # This will be obtained
+NET_TUN="tun0"                        # VPN tunnel interface
+PORT=443                              # Port used by the VPN connection
+SERVICE="apache2"                     # Protected service stopped on VPN loss
+OPENVPN_SERVICE="openvpn-client@ipvanish.service"
+VPN_CONFIG="/etc/openvpn/client.conf" # OpenVPN client configuration
+CHECK_HOST="google.com"               # Connectivity check host
+CHECK_INTERVAL=60                     # Seconds between checks
+RECONNECT_DELAY=30                    # Seconds to wait after reconnecting
 LOGFILE="/var/log/killswitch/vpn.log" # Log file location
-mkdir -p /var/log/killswitch
 
-# info about usage
+# Installation targets
+INSTALL_PATH="/usr/sbin/killswitch.sh"
+SERVICE_FILE="/etc/systemd/system/killswitch.service"
+
+# Command paths
+UFW="/usr/sbin/ufw"
+OPENVPN="/usr/sbin/openvpn"
+IP="/usr/sbin/ip"
+PING="/usr/bin/ping"
+SYSTEMCTL="/usr/bin/systemctl"
+PKILL="/usr/bin/pkill"
+REBOOT="/usr/sbin/reboot"
+GREP="/usr/bin/grep"
+MKDIR="/usr/bin/mkdir"
+HOSTNAME="/usr/bin/hostname"
+DATE="/usr/bin/date"
+SLEEP="/usr/bin/sleep"
+CP="/usr/bin/cp"
+CHMOD="/usr/bin/chmod"
+CAT="/usr/bin/cat"
+ID="/usr/bin/id"
+
 info()
 {
-  echo -e "Usage: killswitch.sh up/down/check\n"
-  echo -e "killswitch.sh is designed to config ufw based on vars in the script\n"
-  echo -e "Options :"
-  echo -e "  up      configures ufw based on new vpn device"
-  echo -e "  down    clears ufw ALL rules"
-  echo -e "  check   monitors your vpn for changes, used in crontab\n"
-  echo -e "An argument must be provided or you will receive this message"
+  printf '%s\n\n' "Usage: killswitch.sh up/down/check/install"
+  printf '%s\n\n' "killswitch.sh configures ufw based on variables in the script."
+  printf '%s\n' "Options:"
+  printf '%s\n' "  up       configures ufw based on the VPN device"
+  printf '%s\n' "  down     disables ufw and restores normal networking"
+  printf '%s\n' "  check    monitors the VPN and restarts OpenVPN if needed"
+  printf '%s\n' "  install  installs, enables, and starts the systemd monitor service"
+  printf '\n%s\n' "An argument must be provided or you will receive this message."
 }
 
-if [ $SETUP != "yes" ]; then
-  echo -e "Please update variables in /usr/sbin/killswitch.sh"
+fail()
+{
+  printf '%s\n' "$1" >&2
   exit 1;
+}
+
+require_setup()
+{
+  if [ "$SETUP" != "yes" ]; then
+    fail "Please update variables in /usr/sbin/killswitch.sh"
+  fi
+}
+
+require_paths()
+{
+  MISSING_PATHS=""
+  MISSING_PACKAGES=""
+
+  while [ "$#" -gt 0 ]; do
+    COMMAND_PATH=$1
+    PACKAGE=$2
+
+    if [ ! -x "$COMMAND_PATH" ]; then
+      MISSING_PATHS="${MISSING_PATHS} ${COMMAND_PATH}"
+      case " $MISSING_PACKAGES " in
+        *" $PACKAGE "*)
+          ;;
+        *)
+          MISSING_PACKAGES="${MISSING_PACKAGES} ${PACKAGE}"
+          ;;
+      esac
+    fi
+
+    shift 2
+  done
+
+  if [ -n "$MISSING_PATHS" ]; then
+    printf 'Missing required command path(s):%s\n' "$MISSING_PATHS" >&2
+    printf 'Install the related Debian packages, for example:\n' >&2
+    printf '  sudo apt install%s\n' "$MISSING_PACKAGES" >&2
+    printf 'If your system uses different paths, update the command path variables near the top of this script.\n' >&2
+    exit 1
+  fi
+}
+
+require_firewall_paths()
+{
+  require_paths "$UFW" ufw "$IP" iproute2 "$PING" iputils-ping
+}
+
+require_monitor_paths()
+{
+  require_paths \
+    "$UFW" ufw \
+    "$IP" iproute2 \
+    "$PING" iputils-ping \
+    "$REBOOT" systemd \
+    "$GREP" grep \
+    "$MKDIR" coreutils \
+    "$HOSTNAME" hostname \
+    "$DATE" coreutils \
+    "$SLEEP" coreutils
+
+  if [ -n "$SERVICE" ] || [ -n "$OPENVPN_SERVICE" ]; then
+    require_paths "$SYSTEMCTL" systemd
+  fi
+
+  if [ -z "$OPENVPN_SERVICE" ]; then
+    require_paths "$OPENVPN" openvpn "$PKILL" procps
+  fi
+}
+
+require_install_paths()
+{
+  require_monitor_paths
+  require_paths "$CP" coreutils "$CHMOD" coreutils "$CAT" coreutils
+}
+
+require_root()
+{
+  if [ "$("$ID" -u)" != "0" ]; then
+    fail "This command must be run as root"
+  fi
+}
+
+ensure_log_dir()
+{
+  LOGDIR=${LOGFILE%/*}
+
+  if [ "$LOGDIR" != "$LOGFILE" ]; then
+    "$MKDIR" -p "$LOGDIR" || fail "Could not create log directory: $LOGDIR"
+  fi
+}
+
+tunnel_is_up()
+{
+  "$PING" -c 1 -I "$NET_TUN" "$CHECK_HOST" >/dev/null 2>&1
+}
+
+network_is_ready()
+{
+  "$IP" -4 addr show dev "$NET_DEV" 2>/dev/null | "$GREP" -q 'inet '
+}
+
+restart_openvpn()
+{
+  if [ -n "$OPENVPN_SERVICE" ]; then
+    "$SYSTEMCTL" restart "$OPENVPN_SERVICE"
+  else
+    "$PKILL" openvpn
+    "$OPENVPN" --daemon --config "$VPN_CONFIG"
+  fi
+}
+
+write_service_file()
+{
+  "$CAT" > "$SERVICE_FILE" <<EOF
+[Unit]
+Description=OpenVPN UFW killswitch monitor
+After=network-online.target
+Wants=network-online.target
+EOF
+
+  if [ -n "$OPENVPN_SERVICE" ]; then
+    "$CAT" >> "$SERVICE_FILE" <<EOF
+After=$OPENVPN_SERVICE
+Wants=$OPENVPN_SERVICE
+EOF
+  fi
+
+  "$CAT" >> "$SERVICE_FILE" <<EOF
+
+[Service]
+Type=simple
+ExecStart=$INSTALL_PATH check
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+install_service()
+{
+  "$CP" "$0" "$INSTALL_PATH" || fail "Could not install script to $INSTALL_PATH"
+  "$CHMOD" 755 "$INSTALL_PATH" || fail "Could not make $INSTALL_PATH executable"
+  write_service_file
+
+  "$SYSTEMCTL" daemon-reload || fail "Could not reload systemd"
+  "$SYSTEMCTL" enable --now killswitch.service || fail "Could not enable and start killswitch.service"
+
+  printf '%s\n' "Installed $INSTALL_PATH"
+  printf '%s\n' "Installed $SERVICE_FILE"
+  printf '%s\n' "Enabled and started killswitch.service"
+}
+
+INPUT=$1
+
+if [ -z "$INPUT" ]; then
+  info
+  exit 1
 fi
 
-if [ "$INPUT" == "up" ]; then
-  # Set up the firewall and block all connections
-  /usr/sbin/ufw default deny outgoing
-  /usr/sbin/ufw default deny incoming
+case "$INPUT" in
+  up)
+    require_setup
+    require_firewall_paths
 
-  # allow vpn device
-  /usr/sbin/ufw allow out on $NET_TUN
-  /usr/sbin/ufw allow in on $NET_TUN
+    "$UFW" default deny outgoing
+    "$UFW" default deny incoming
 
-  # allow port for vpn over network device
-  /usr/sbin/ufw allow out on $NET_DEV to any port $PORT
-  /usr/sbin/ufw allow in on $NET_DEV from any port $PORT
+    "$UFW" allow out on "$NET_TUN"
+    "$UFW" allow in on "$NET_TUN"
 
-  # allow DNS
-  /usr/sbin/ufw allow out on $NET_TUN to any port 53
-  /usr/sbin/ufw allow in on $NET_TUN to any port 53
+    "$UFW" allow out on "$NET_DEV" to any port "$PORT"
+    "$UFW" allow in on "$NET_DEV" from any port "$PORT"
 
-  # Allow local network connections
-  /usr/sbin/ufw allow out on $NET_DEV from any to $LOCAL_NET
-  /usr/sbin/ufw allow in on $NET_DEV from $LOCAL_NET to any
-  
-  /usr/sbin/ufw enable
-elif [ "$INPUT" == "up" ]; then
-  /usr/sbin/ufw enable
+    "$UFW" allow out on "$NET_TUN" to any port 53
+    "$UFW" allow in on "$NET_TUN" to any port 53
 
-elif [ "$INPUT" == "check" ]; then
-  while [ 1 ]; do
-    if [ "`/bin/ping -c1 -I $NET_TUN google.com`" == "" ]; then
-      /bin/systemctl stop $SERVICE
+    "$UFW" allow out on "$NET_DEV" from any to "$LOCAL_NET"
+    "$UFW" allow in on "$NET_DEV" from "$LOCAL_NET" to any
 
-      echo "*** [Restarting openvpn: `/bin/hostname` @ `/bin/date`] ***" >> $LOGFILE
+    "$UFW" --force enable
+    ;;
+  check)
+    require_setup
+    require_monitor_paths
+    ensure_log_dir
 
-      while [ "`/bin/ping -c1 -I $NET_TUN google.com`" == "" ]; do
-        /usr/bin/pkill openvpn
-        /usr/sbin/ufw disable
-
-        if [ "inactive" != "`/usr/sbin/ufw status | cut -f2 -d \" \" | grep active`" ]; then
-          /sbin/reboot
+    while true; do
+      if ! tunnel_is_up; then
+        if [ -n "$SERVICE" ]; then
+          "$SYSTEMCTL" stop "$SERVICE"
         fi
 
-        while [ "`/sbin/ifconfig | grep 192.168.15`" == "" ]; do
-          # waiting for eth to be assigned ip
-          sleep 60
+        printf '*** [Restarting openvpn: %s @ %s] ***\n' "$("$HOSTNAME")" "$("$DATE")" >> "$LOGFILE"
+
+        while ! tunnel_is_up; do
+          "$UFW" disable
+
+          if "$UFW" status | "$GREP" -q '^Status: active'; then
+            "$REBOOT"
+          fi
+
+          while ! network_is_ready; do
+            # waiting for the physical interface to receive an IPv4 address
+            "$SLEEP" 60
+          done
+
+          restart_openvpn
+          "$SLEEP" "$RECONNECT_DELAY"
+          "$UFW" --force enable
         done
 
-        /usr/sbin/openvpn --daemon --config /etc/openvpn/ipvanish.conf
-        sleep 30
-        /usr/sbin/ufw enable
+        if [ -n "$SERVICE" ]; then
+          "$SYSTEMCTL" start "$SERVICE"
+        fi
 
-      done
-
-      /bin/systemctl start $SERVICE
-
-      echo "-----------------------------------------------------------------" >> $LOGFILE
-    fi
-    sleep 60
-  done
-elif [ "$INPUT" == "down" ]; then
-  /usr/sbin/ufw disable
-
-elif [ "$INPUT" == "install" ]; then
-  # install cron montior
-
-  # install init script
-  echo "" > /etc/init.d/killswitch
-
-  # start script
-
-else
-  info
-fi
+        printf '%s\n' "-----------------------------------------------------------------" >> "$LOGFILE"
+      fi
+      "$SLEEP" "$CHECK_INTERVAL"
+    done
+    ;;
+  down)
+    require_setup
+    require_firewall_paths
+    "$UFW" disable
+    ;;
+  install)
+    require_setup
+    require_paths "$ID" coreutils
+    require_root
+    require_install_paths
+    install_service
+    ;;
+  *)
+    info
+    ;;
+esac
 
 exit 0;
-

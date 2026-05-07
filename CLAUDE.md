@@ -4,29 +4,32 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-A bash script that implements a VPN killswitch using UFW (Uncomplicated Firewall) on Ubuntu. Ensures all traffic routes through an OpenVPN tunnel by blocking non-VPN connections at the firewall level, with a monitoring loop that restarts the VPN if it drops.
+`killswitch.sh` is a POSIX `sh` script for Debian-family Linux systems. It uses UFW to restrict traffic to an OpenVPN tunnel and includes a long-running monitor mode that can restart OpenVPN through systemd when tunnel connectivity fails.
 
 ## Modes
 
-- `up` — Configures UFW: denies all traffic by default, then allows traffic only through the VPN tunnel (`tun0`), the VPN port on the physical interface, DNS over the tunnel, and local network access.
-- `down` — Disables UFW entirely, restoring normal networking.
-- `check` — Infinite monitoring loop (for cron/service use). Pings google.com through the tunnel every 60 seconds. On failure: stops the protected service, kills openvpn, disables UFW, waits for network, reconnects VPN, re-enables UFW, restarts the service. Reboots as a last resort if UFW won't disable.
-- `install` — Stub, not yet implemented.
+- `up` configures UFW with default deny inbound/outbound rules, VPN tunnel allowances, VPN port allowances, DNS port 53 over the tunnel, and local-network access. DNS is intentionally not allowed before the tunnel is available.
+- `down` disables UFW entirely. This restores normal networking and removes firewall protection until UFW is enabled again.
+- `check` runs the monitor loop. It pings `CHECK_HOST` through `NET_TUN`; on failure it stops the protected `SERVICE`, disables UFW, waits for the physical interface to regain IPv4 connectivity, restarts OpenVPN, re-enables UFW, and restarts `SERVICE`. If UFW cannot be disabled during recovery and still reports active, the script intentionally forces a reboot.
+- `install` copies the configured script to `INSTALL_PATH`, writes `SERVICE_FILE`, reloads systemd, and enables/starts `killswitch.service`.
 
 ## Configuration
 
-All config is via variables at the top of the script. The `SETUP` variable must be changed to `"yes"` after configuring, or the script refuses to run.
+All runtime configuration is in variables at the top of `killswitch.sh`. `SETUP` must be changed to `yes` before operational modes run.
 
-Key variables: `NET_DEV` (physical interface), `LOCAL_NET` (LAN subnet), `NET_TUN` (VPN interface), `PORT` (VPN port), `SERVICE` (service to stop/start with VPN), `LOGFILE`.
+Primary variables:
+
+- `NET_DEV`, `LOCAL_NET`, `NET_TUN`, and `PORT` define the network and firewall behavior.
+- `SERVICE` is an optional protected service to stop while the VPN is down.
+- `OPENVPN_SERVICE` is the preferred modern OpenVPN restart target, for example `openvpn-client@ipvanish.service`.
+- `VPN_CONFIG` is only used when `OPENVPN_SERVICE` is empty and the script falls back to direct `openvpn --daemon`.
+- `INSTALL_PATH` and `SERVICE_FILE` control where `install` writes the script and systemd unit.
+- Command path variables such as `UFW`, `SYSTEMCTL`, `IP`, and `PING` are intentional because root service environments may not include `/usr/sbin` in `PATH`.
 
 ## Platform
 
-Ubuntu 18.04/16.04 LTS with UFW and OpenVPN. Requires root privileges for UFW and service management.
+Target Debian-family Linux distributions such as Debian, Ubuntu, and derivatives. Required packages include `ufw`, `openvpn`, `iproute2`, `iputils-ping`, and `systemd`; fallback direct OpenVPN restart also uses `procps` for `pkill`.
 
-## Known issues
+## Known Issues
 
-- Line 64: duplicate `elif [ "$INPUT" == "up" ]` — dead code, likely meant to be a different command
-- `install` mode is a stub that overwrites `/etc/init.d/killswitch` with an empty file
-- Hardcoded IP pattern `192.168.15` in check mode doesn't use `$LOCAL_NET`
-- Hardcoded VPN config path `/etc/openvpn/ipvanish.conf`
-- DNS rules only allow port 53 on tun0, so DNS fails before VPN connects
+- Direct OpenVPN fallback mode uses broad `pkill openvpn` behavior when `OPENVPN_SERVICE` is empty.

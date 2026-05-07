@@ -1,51 +1,91 @@
 # killswitch
 
-A VPN killswitch for OpenVPN on Ubuntu that uses UFW to ensure all traffic routes through the VPN tunnel. If the VPN drops, all non-local traffic is blocked — no IP leaks.
+A configurable OpenVPN killswitch for Debian-family Linux systems. It uses UFW to block non-local traffic outside the VPN tunnel and can run a systemd monitor that restarts OpenVPN when tunnel connectivity fails.
 
-## How it works
+## Behavior
 
-When activated, the script configures UFW to:
-1. **Deny all** inbound and outbound traffic by default
-2. **Allow** traffic through the VPN tunnel interface (`tun0`)
-3. **Allow** the VPN connection port on the physical interface
-4. **Allow** DNS resolution through the tunnel
-5. **Allow** local network access (e.g., LAN printers, NAS)
+When enabled with `up`, the script configures UFW to:
 
-A monitoring mode continuously checks connectivity through the tunnel and automatically restarts OpenVPN if it drops.
+1. Deny inbound and outbound traffic by default
+2. Allow traffic through the VPN tunnel interface, such as `tun0`
+3. Allow the configured VPN port on the physical network interface
+4. Allow DNS port 53 through the VPN tunnel
+5. Allow access to the configured local network
 
-## Setup
+When running in `check` mode, the monitor pings `CHECK_HOST` through `NET_TUN`. If that check fails, it stops the protected `SERVICE` when configured, disables UFW, waits for the physical interface to have an IPv4 address, restarts OpenVPN, re-enables UFW, and then restarts the protected service. If UFW cannot be disabled during recovery and still reports active, the script forces a reboot. That is intentional killswitch behavior: if the VPN/firewall recovery path fails, the host should not continue running in an unknown network state.
 
-Edit the variables at the top of `killswitch.sh`:
+If `OPENVPN_SERVICE` is set, OpenVPN is restarted through systemd, for example `systemctl restart openvpn-client@ipvanish.service`.
 
-```bash
-NET_DEV="eth0"               # Physical network interface
-LOCAL_NET="192.168.0.0/24"   # Local network subnet
-NET_TUN="tun0"               # VPN tunnel interface
-PORT=443                     # VPN connection port
-SERVICE="apache2"            # Service to protect (stopped when VPN drops)
-```
-
-Then change `SETUP="no"` to `SETUP="yes"`.
-
-## Usage
-
-```bash
-# Activate the killswitch
-sudo ./killswitch.sh up
-
-# Deactivate (disables UFW)
-sudo ./killswitch.sh down
-
-# Monitor VPN and auto-restart on failure (run as service or cron)
-sudo ./killswitch.sh check
-```
+DNS is intentionally limited to the VPN tunnel. The killswitch does not allow pre-tunnel DNS fallback because that can leak host lookups outside the VPN path.
 
 ## Requirements
 
-- Ubuntu 18.04/16.04 LTS
+- Debian-family Linux distribution such as Debian, Ubuntu, or a derivative
 - UFW
 - OpenVPN
-- Root privileges
+- iproute2
+- iputils-ping
+- systemd for service installation and OpenVPN service restarts
+- Root privileges for firewall, service, and install operations
+
+Install the common packages with:
+
+```sh
+sudo apt install ufw openvpn iproute2 iputils-ping
+```
+
+## Configuration
+
+Edit the variables at the top of `killswitch.sh`, then change `SETUP="no"` to `SETUP="yes"`.
+
+```sh
+NET_DEV="eth0"
+LOCAL_NET="192.168.0.0/24"
+NET_TUN="tun0"
+PORT=443
+SERVICE="apache2"
+OPENVPN_SERVICE="openvpn-client@ipvanish.service"
+VPN_CONFIG="/etc/openvpn/client.conf"
+CHECK_HOST="google.com"
+```
+
+Use `ip link` to confirm interface names on the target host.
+
+On current Debian-family OpenVPN installs, client configs commonly map to systemd units such as `openvpn-client@ipvanish.service`. With `OPENVPN_SERVICE` set, the monitor uses systemd to restart OpenVPN and the installed killswitch service declares `After=` and `Wants=` relationships to that OpenVPN unit.
+
+Leave `OPENVPN_SERVICE` empty only if you need the legacy fallback path:
+
+```sh
+openvpn --daemon --config "$VPN_CONFIG"
+```
+
+The script uses explicit command path variables because root service environments may not include `/usr/sbin` in `PATH`. If your system installs commands somewhere else, update the command path variables near the top of the script before enabling it.
+
+## Usage
+
+```sh
+# Activate the firewall killswitch rules
+sudo ./killswitch.sh up
+
+# Disable UFW and restore normal networking
+sudo ./killswitch.sh down
+
+# Run the monitor in the foreground
+sudo ./killswitch.sh check
+
+# Install, enable, and start the systemd monitor service
+sudo ./killswitch.sh install
+```
+
+`down` disables UFW entirely. This restores normal networking, but it also removes firewall protection until UFW is enabled again.
+
+`install` copies the configured script to `/usr/sbin/killswitch.sh`, writes `/etc/systemd/system/killswitch.service`, reloads systemd, and runs:
+
+```sh
+systemctl enable --now killswitch.service
+```
+
+`install` starts the monitor service only. Run `sudo ./killswitch.sh up` separately when you are ready to activate the firewall rules.
 
 ## License
 
