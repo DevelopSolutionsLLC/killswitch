@@ -31,7 +31,7 @@ DNS is intentionally limited to the VPN tunnel. The killswitch does not allow pr
 Install the common packages with:
 
 ```sh
-sudo apt install ufw openvpn iproute2 iputils-ping
+sudo apt install ufw openvpn iproute2 iputils-ping systemd grep coreutils hostname
 ```
 
 ## Configuration
