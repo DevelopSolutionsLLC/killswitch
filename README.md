@@ -14,7 +14,7 @@ When enabled with `up`, the script configures UFW to:
 
 When running in `check` mode, the monitor pings `CHECK_HOST` through `NET_TUN`. If that check fails, it stops the protected `SERVICE` when configured, disables UFW, waits for the physical interface to have an IPv4 address, restarts OpenVPN, re-enables UFW, and then restarts the protected service. If UFW cannot be disabled during recovery and still reports active, the script forces a reboot. That is intentional killswitch behavior: if the VPN/firewall recovery path fails, the host should not continue running in an unknown network state.
 
-If `OPENVPN_SERVICE` is set, OpenVPN is restarted through systemd, for example `systemctl restart openvpn-client@ipvanish.service`.
+OpenVPN is restarted through systemd, for example `systemctl restart openvpn-client@ipvanish.service`.
 
 DNS is intentionally limited to the VPN tunnel. The killswitch does not allow pre-tunnel DNS fallback because that can leak host lookups outside the VPN path.
 
@@ -45,19 +45,12 @@ NET_TUN="tun0"
 PORT=443
 SERVICE="apache2"
 OPENVPN_SERVICE="openvpn-client@ipvanish.service"
-VPN_CONFIG="/etc/openvpn/client.conf"
 CHECK_HOST="google.com"
 ```
 
 Use `ip link` to confirm interface names on the target host.
 
-On current Debian-family OpenVPN installs, client configs commonly map to systemd units such as `openvpn-client@ipvanish.service`. With `OPENVPN_SERVICE` set, the monitor uses systemd to restart OpenVPN and the installed killswitch service declares `After=` and `Wants=` relationships to that OpenVPN unit.
-
-Leave `OPENVPN_SERVICE` empty only if you need the legacy fallback path:
-
-```sh
-openvpn --daemon --config "$VPN_CONFIG"
-```
+On current Debian-family OpenVPN installs, client configs commonly map to systemd units such as `openvpn-client@ipvanish.service`. The monitor uses systemd to restart OpenVPN, and the installed killswitch service declares `After=` and `Wants=` relationships to that OpenVPN unit.
 
 The script uses explicit command path variables because root service environments may not include `/usr/sbin` in `PATH`. If your system installs commands somewhere else, update the command path variables near the top of the script before enabling it.
 

@@ -21,15 +21,10 @@ Primary variables:
 
 - `NET_DEV`, `LOCAL_NET`, `NET_TUN`, and `PORT` define the network and firewall behavior.
 - `SERVICE` is an optional protected service to stop while the VPN is down.
-- `OPENVPN_SERVICE` is the preferred modern OpenVPN restart target, for example `openvpn-client@ipvanish.service`.
-- `VPN_CONFIG` is only used when `OPENVPN_SERVICE` is empty and the script falls back to direct `openvpn --daemon`.
+- `OPENVPN_SERVICE` is required and identifies the systemd OpenVPN restart target, for example `openvpn-client@ipvanish.service`.
 - `INSTALL_PATH` and `SERVICE_FILE` control where `install` writes the script and systemd unit.
 - Command path variables such as `UFW`, `SYSTEMCTL`, `IP`, and `PING` are intentional because root service environments may not include `/usr/sbin` in `PATH`.
 
 ## Platform
 
-Target Debian-family Linux distributions such as Debian, Ubuntu, and derivatives. Required packages include `ufw`, `openvpn`, `iproute2`, `iputils-ping`, and `systemd`; fallback direct OpenVPN restart also uses `procps` for `pkill`.
-
-## Known Issues
-
-- Direct OpenVPN fallback mode uses broad `pkill openvpn` behavior when `OPENVPN_SERVICE` is empty.
+Target Debian-family Linux distributions such as Debian, Ubuntu, and derivatives. Required packages include `ufw`, `openvpn`, `iproute2`, `iputils-ping`, and `systemd`.

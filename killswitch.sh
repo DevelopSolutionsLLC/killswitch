@@ -19,7 +19,6 @@ NET_TUN="tun0"                        # VPN tunnel interface
 PORT=443                              # Port used by the VPN connection
 SERVICE="apache2"                     # Protected service stopped on VPN loss
 OPENVPN_SERVICE="openvpn-client@ipvanish.service"
-VPN_CONFIG="/etc/openvpn/client.conf" # OpenVPN client configuration
 CHECK_HOST="google.com"               # Connectivity check host
 CHECK_INTERVAL=60                     # Seconds between checks
 RECONNECT_DELAY=30                    # Seconds to wait after reconnecting
@@ -31,11 +30,9 @@ SERVICE_FILE="/etc/systemd/system/killswitch.service"
 
 # Command paths
 UFW="/usr/sbin/ufw"
-OPENVPN="/usr/sbin/openvpn"
 IP="/usr/sbin/ip"
 PING="/usr/bin/ping"
 SYSTEMCTL="/usr/bin/systemctl"
-PKILL="/usr/bin/pkill"
 REBOOT="/usr/sbin/reboot"
 GREP="/usr/bin/grep"
 MKDIR="/usr/bin/mkdir"
@@ -69,6 +66,10 @@ require_setup()
 {
   if [ "$SETUP" != "yes" ]; then
     fail "Please update variables in /usr/sbin/killswitch.sh"
+  fi
+
+  if [ -z "$OPENVPN_SERVICE" ]; then
+    fail "Please set OPENVPN_SERVICE to the systemd OpenVPN client service name"
   fi
 }
 
@@ -122,13 +123,7 @@ require_monitor_paths()
     "$DATE" coreutils \
     "$SLEEP" coreutils
 
-  if [ -n "$SERVICE" ] || [ -n "$OPENVPN_SERVICE" ]; then
-    require_paths "$SYSTEMCTL" systemd
-  fi
-
-  if [ -z "$OPENVPN_SERVICE" ]; then
-    require_paths "$OPENVPN" openvpn "$PKILL" procps
-  fi
+  require_paths "$SYSTEMCTL" systemd
 }
 
 require_install_paths()
@@ -165,12 +160,7 @@ network_is_ready()
 
 restart_openvpn()
 {
-  if [ -n "$OPENVPN_SERVICE" ]; then
-    "$SYSTEMCTL" restart "$OPENVPN_SERVICE"
-  else
-    "$PKILL" openvpn
-    "$OPENVPN" --daemon --config "$VPN_CONFIG"
-  fi
+  "$SYSTEMCTL" restart "$OPENVPN_SERVICE"
 }
 
 write_service_file()
@@ -182,12 +172,10 @@ After=network-online.target
 Wants=network-online.target
 EOF
 
-  if [ -n "$OPENVPN_SERVICE" ]; then
-    "$CAT" >> "$SERVICE_FILE" <<EOF
+  "$CAT" >> "$SERVICE_FILE" <<EOF
 After=$OPENVPN_SERVICE
 Wants=$OPENVPN_SERVICE
 EOF
-  fi
 
   "$CAT" >> "$SERVICE_FILE" <<EOF
 
