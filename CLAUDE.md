@@ -30,4 +30,4 @@ Primary variables:
 
 ## Platform
 
-Target Debian-family Linux distributions such as Debian, Ubuntu, and derivatives. Required packages include `ufw`, `openvpn`, `iproute2`, `iputils-ping`, `systemd`, `grep`, `coreutils`, and `hostname`.
+Target Debian-family Linux distributions such as Debian, Ubuntu, and derivatives. Required packages include `ufw`, `openvpn`, `iproute2`, `iputils-ping`, `libc-bin`, `systemd`, `coreutils`, and `hostname`.
