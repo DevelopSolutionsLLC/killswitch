@@ -12,9 +12,9 @@ When enabled with `up`, the script stops the protected service, verifies it is d
 4. Allow DNS port 53 through the VPN tunnel
 5. Allow access to the configured local network
 
-When running in `check` mode, the monitor first stops the protected service, verifies it is down, then waits up to 180 seconds for OpenVPN, the tunnel interface, DNS, and the tunnel ping to be healthy, checking every 5 seconds. After readiness passes, it starts the protected `SERVICE`, then pings `CHECK_HOST` through `NET_TUN` on each monitor interval. If the check fails, it stops the protected service, verifies the service is stopped, reapplies deny-by-default UFW policy, logs the failure, and reboots. That is intentional killswitch behavior: if the VPN path fails, the host should not continue running in an unknown network state.
+When running in `check` mode, the monitor first stops the protected service, verifies it is down, then waits up to 180 seconds for OpenVPN, the tunnel interface, DNS, and the tunnel ping to be healthy, checking every 5 seconds. After readiness passes, it starts the protected `SERVICE`, then pings `CHECK_HOST` through `NET_TUN` on each monitor interval. If the check fails, it stops the protected service, verifies the service is stopped, restarts the configured OpenVPN systemd service up to `OPENVPN_RESTART_ATTEMPTS` times, and starts the protected service again only if readiness returns. If recovery does not succeed, it reapplies deny-by-default UFW policy, logs the failure, and reboots. That is intentional killswitch behavior: if the VPN path cannot be restored safely, the host should not continue running in an unknown network state.
 
-OpenVPN readiness is checked through systemd, for example against `openvpn-client@ipvanish.service`, but the script does not start, stop, or restart OpenVPN. Recovery relies on rebooting into a clean service/firewall state instead of controlling OpenVPN inside the failure loop.
+OpenVPN readiness and recovery are handled through systemd, for example against `openvpn-client@ipvanish.service`. The script does not use direct `pkill` or `openvpn --daemon` control.
 
 DNS is intentionally limited to the VPN tunnel. The killswitch does not allow pre-tunnel DNS fallback because that can leak host lookups outside the VPN path.
 
@@ -50,6 +50,7 @@ OPENVPN_SERVICE="openvpn-client@ipvanish.service"
 CHECK_HOST="google.com"
 WAIT_INTERVAL=5
 READINESS_TIMEOUT=180
+OPENVPN_RESTART_ATTEMPTS=2
 REQUIRE_UFW_IPV6="yes"
 ```
 
