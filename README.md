@@ -4,7 +4,7 @@ A configurable OpenVPN killswitch for Debian-family Linux systems. It uses UFW t
 
 ## Behavior
 
-When enabled with `up`, the script waits up to 180 seconds for OpenVPN readiness, configures UFW, verifies readiness again under the firewall rules, then starts the protected service. UFW is configured to:
+When enabled with `up`, the script stops the protected service, verifies it is down, waits up to 180 seconds for OpenVPN readiness, configures UFW, verifies readiness again under the firewall rules, then starts the protected service. UFW is configured to:
 
 1. Deny inbound and outbound traffic by default
 2. Allow traffic through the VPN tunnel interface, such as `tun0`
@@ -12,7 +12,7 @@ When enabled with `up`, the script waits up to 180 seconds for OpenVPN readiness
 4. Allow DNS port 53 through the VPN tunnel
 5. Allow access to the configured local network
 
-When running in `check` mode, the monitor first waits up to 180 seconds for OpenVPN, the tunnel interface, DNS, and the tunnel ping to be healthy, checking every 5 seconds. After readiness passes, it starts the protected `SERVICE`, then pings `CHECK_HOST` through `NET_TUN` on each monitor interval. If the check fails, it stops the protected service, verifies the service is stopped, resets UFW, logs the failure, and reboots. That is intentional killswitch behavior: if the VPN path fails, the host should not continue running in an unknown network state.
+When running in `check` mode, the monitor first stops the protected service, verifies it is down, then waits up to 180 seconds for OpenVPN, the tunnel interface, DNS, and the tunnel ping to be healthy, checking every 5 seconds. After readiness passes, it starts the protected `SERVICE`, then pings `CHECK_HOST` through `NET_TUN` on each monitor interval. If the check fails, it stops the protected service, verifies the service is stopped, resets UFW, logs the failure, and reboots. That is intentional killswitch behavior: if the VPN path fails, the host should not continue running in an unknown network state.
 
 OpenVPN readiness is checked through systemd, for example against `openvpn-client@ipvanish.service`, but the script does not start, stop, or restart OpenVPN. Recovery relies on rebooting into a clean service/firewall state instead of controlling OpenVPN inside the failure loop.
 
@@ -89,7 +89,7 @@ sudo ./killswitch.sh install
 systemctl daemon-reload
 ```
 
-`install` does not enable or start the service. Run `sudo ./killswitch.sh up` separately when you are ready to activate the firewall rules, then run `sudo systemctl enable --now killswitch.service` when you are ready for the monitor to run persistently.
+`install` disables independent autostart for the protected service, but does not enable or start `killswitch.service`. Run `sudo ./killswitch.sh up` separately when you are ready to activate the firewall rules, then run `sudo systemctl enable --now killswitch.service` when you are ready for the monitor to run persistently.
 
 ## License
 

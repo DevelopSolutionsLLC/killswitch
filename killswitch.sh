@@ -253,10 +253,17 @@ install_service()
   "$CHMOD" 755 "$INSTALL_PATH" || fail "Could not make $INSTALL_PATH executable"
   write_service_file
 
+  if [ -n "$SERVICE" ]; then
+    "$SYSTEMCTL" disable "$SERVICE" >/dev/null 2>&1 || fail "Could not disable protected service autostart: $SERVICE"
+  fi
+
   "$SYSTEMCTL" daemon-reload || fail "Could not reload systemd"
 
   printf '%s\n' "Installed $INSTALL_PATH"
   printf '%s\n' "Installed $SERVICE_FILE"
+  if [ -n "$SERVICE" ]; then
+    printf '%s\n' "Disabled independent autostart for $SERVICE"
+  fi
   printf '%s\n' "Reloaded systemd"
   printf '%s\n' "Run 'systemctl enable --now killswitch.service' when you are ready to start monitoring"
 }
@@ -272,6 +279,8 @@ case "$INPUT" in
   up)
     require_setup
     require_guard_paths
+    stop_protected_service
+    verify_protected_service_stopped
     guard_vpn
 
     reset_ufw
@@ -299,6 +308,8 @@ case "$INPUT" in
     require_setup
     require_monitor_paths
     ensure_log_dir
+    stop_protected_service
+    verify_protected_service_stopped
     guard_vpn
     start_protected_service
 

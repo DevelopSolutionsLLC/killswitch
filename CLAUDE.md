@@ -8,12 +8,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Modes
 
-- `up` waits up to `READINESS_TIMEOUT` seconds for OpenVPN, the tunnel interface, DNS, and the tunnel ping to be healthy before configuring UFW with default deny inbound/outbound rules, VPN tunnel allowances, VPN port allowances, DNS port 53 over the tunnel, and local-network access. It verifies readiness again after UFW is enabled and starts the protected `SERVICE` only after that succeeds. DNS is intentionally not allowed before the tunnel is available.
+- `up` stops the protected `SERVICE`, verifies it is down, waits up to `READINESS_TIMEOUT` seconds for OpenVPN, the tunnel interface, DNS, and the tunnel ping to be healthy before configuring UFW with default deny inbound/outbound rules, VPN tunnel allowances, VPN port allowances, DNS port 53 over the tunnel, and local-network access. It verifies readiness again after UFW is enabled and starts the protected `SERVICE` only after that succeeds. DNS is intentionally not allowed before the tunnel is available.
 - `down` disables UFW entirely. This restores normal networking and removes firewall protection until UFW is enabled again.
-- `check` waits up to `READINESS_TIMEOUT` seconds for OpenVPN, the tunnel interface, DNS, and the tunnel ping to be healthy before starting the protected `SERVICE` and entering the monitor loop. It pings `CHECK_HOST` through `NET_TUN`; on failure it stops the protected `SERVICE`, verifies the protected service is stopped, resets UFW, logs the failure, and intentionally forces a reboot.
+- `check` stops the protected `SERVICE`, verifies it is down, waits up to `READINESS_TIMEOUT` seconds for OpenVPN, the tunnel interface, DNS, and the tunnel ping to be healthy before starting the protected `SERVICE` and entering the monitor loop. It pings `CHECK_HOST` through `NET_TUN`; on failure it stops the protected `SERVICE`, verifies the protected service is stopped, resets UFW, logs the failure, and intentionally forces a reboot.
 - `health` checks OpenVPN service state, tunnel interface presence, DNS, and tunnel ping once.
 - `guard` waits until OpenVPN service state, tunnel interface presence, DNS, and tunnel ping are all healthy, bounded by `READINESS_TIMEOUT`.
-- `install` copies the configured script to `INSTALL_PATH`, writes `SERVICE_FILE`, and reloads systemd. It does not enable or start `killswitch.service`; that remains an explicit operator step.
+- `install` copies the configured script to `INSTALL_PATH`, writes `SERVICE_FILE`, disables independent autostart for the protected `SERVICE`, and reloads systemd. It does not enable or start `killswitch.service`; that remains an explicit operator step.
 
 ## Configuration
 
