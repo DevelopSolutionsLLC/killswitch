@@ -49,6 +49,7 @@ OPENVPN_SERVICE="openvpn-client@ipvanish.service"
 CHECK_HOST="google.com"
 WAIT_INTERVAL=5
 READINESS_TIMEOUT=180
+REQUIRE_UFW_IPV6="yes"
 ```
 
 Use `ip link` to confirm interface names on the target host.
@@ -56,6 +57,8 @@ Use `ip link` to confirm interface names on the target host.
 On current Debian-family OpenVPN installs, client configs commonly map to systemd units such as `openvpn-client@ipvanish.service`. The installed killswitch service declares an `After=` relationship to that OpenVPN unit, then the script performs its own 180-second readiness guard before starting the protected service.
 
 The script uses explicit command path variables because root service environments may not include `/usr/sbin` in `PATH`. If your system installs commands somewhere else, update the command path variables near the top of the script before enabling it.
+
+When `REQUIRE_UFW_IPV6="yes"`, the script requires `/etc/default/ufw` to contain `IPV6=yes` before applying or monitoring rules. If the host does not use IPv6, disable IPv6 at the OS level or keep UFW IPv6 rule management enabled so outbound-deny behavior is consistent.
 
 ## Usage
 

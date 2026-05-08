@@ -23,11 +23,13 @@ CHECK_HOST="google.com"               # Connectivity check host
 CHECK_INTERVAL=60                     # Seconds between checks
 WAIT_INTERVAL=5                       # Seconds between readiness checks
 READINESS_TIMEOUT=180                 # Seconds to wait for VPN readiness
+REQUIRE_UFW_IPV6="yes"                # Require UFW to manage IPv6 rules
 LOGFILE="/var/log/killswitch/vpn.log" # Log file location
 
 # Installation targets
 INSTALL_PATH="/usr/sbin/killswitch.sh"
 SERVICE_FILE="/etc/systemd/system/killswitch.service"
+UFW_DEFAULT="/etc/default/ufw"
 
 # Command paths
 UFW="/usr/sbin/ufw"
@@ -37,6 +39,7 @@ GETENT="/usr/bin/getent"
 SYSTEMCTL="/usr/bin/systemctl"
 REBOOT="/usr/sbin/reboot"
 MKDIR="/usr/bin/mkdir"
+GREP="/usr/bin/grep"
 HOSTNAME="/usr/bin/hostname"
 DATE="/usr/bin/date"
 SLEEP="/usr/bin/sleep"
@@ -115,6 +118,7 @@ require_guard_paths()
     "$IP" iproute2 \
     "$PING" iputils-ping \
     "$GETENT" libc-bin \
+    "$GREP" grep \
     "$SYSTEMCTL" systemd \
     "$SLEEP" coreutils
 }
@@ -169,6 +173,15 @@ tunnel_interface_exists()
 openvpn_is_active()
 {
   "$SYSTEMCTL" is-active --quiet "$OPENVPN_SERVICE"
+}
+
+verify_ufw_ipv6()
+{
+  if [ "$REQUIRE_UFW_IPV6" = "yes" ]; then
+    if [ ! -r "$UFW_DEFAULT" ] || ! "$GREP" -Eq '^IPV6=yes$' "$UFW_DEFAULT"; then
+      fail "UFW IPv6 handling is not enabled in $UFW_DEFAULT; set IPV6=yes or disable IPv6 before using killswitch"
+    fi
+  fi
 }
 
 health_check()
@@ -281,6 +294,7 @@ case "$INPUT" in
     require_guard_paths
     stop_protected_service
     verify_protected_service_stopped
+    verify_ufw_ipv6
     guard_vpn
 
     reset_ufw
@@ -310,6 +324,7 @@ case "$INPUT" in
     ensure_log_dir
     stop_protected_service
     verify_protected_service_stopped
+    verify_ufw_ipv6
     guard_vpn
     start_protected_service
 

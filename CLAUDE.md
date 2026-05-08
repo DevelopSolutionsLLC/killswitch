@@ -25,6 +25,7 @@ Primary variables:
 - `SERVICE` is an optional protected service to stop while the VPN is down.
 - `OPENVPN_SERVICE` is required and identifies the systemd OpenVPN service checked for readiness, for example `openvpn-client@ipvanish.service`. The script checks and waits on this service but does not start, stop, or restart OpenVPN.
 - `CHECK_HOST`, `CHECK_INTERVAL`, `WAIT_INTERVAL`, and `READINESS_TIMEOUT` define health checking and readiness wait behavior.
+- `REQUIRE_UFW_IPV6` defaults to `yes` and requires UFW IPv6 rule management before applying or monitoring firewall rules.
 - `INSTALL_PATH` and `SERVICE_FILE` control where `install` writes the script and systemd unit.
 - Command path variables such as `UFW`, `SYSTEMCTL`, `IP`, and `PING` are intentional because root service environments may not include `/usr/sbin` in `PATH`.
 
