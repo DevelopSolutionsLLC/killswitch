@@ -208,9 +208,12 @@ guard_vpn()
   fail "VPN readiness failed after ${READINESS_TIMEOUT}s: $OPENVPN_SERVICE, $NET_TUN, DNS, or tunnel ping is not ready"
 }
 
-reset_ufw()
+apply_ufw_defaults()
 {
-  "$UFW" --force reset
+  "$UFW" default deny outgoing
+  "$UFW" default deny incoming
+  "$UFW" --force enable
+  "$UFW" reload
 }
 
 stop_protected_service()
@@ -297,10 +300,7 @@ case "$INPUT" in
     verify_ufw_ipv6
     guard_vpn
 
-    reset_ufw
-
-    "$UFW" default deny outgoing
-    "$UFW" default deny incoming
+    apply_ufw_defaults
 
     "$UFW" allow out on "$NET_TUN"
     "$UFW" allow in on "$NET_TUN"
@@ -314,7 +314,7 @@ case "$INPUT" in
     "$UFW" allow out on "$NET_DEV" from any to "$LOCAL_NET"
     "$UFW" allow in on "$NET_DEV" from "$LOCAL_NET" to any
 
-    "$UFW" --force enable
+    "$UFW" reload
     health_check
     start_protected_service
     ;;
@@ -332,7 +332,7 @@ case "$INPUT" in
       if ! tunnel_is_up; then
         stop_protected_service
         verify_protected_service_stopped
-        reset_ufw
+        apply_ufw_defaults
         printf '*** [VPN health failed, rebooting for OpenVPN recovery: %s @ %s] ***\n' "$("$HOSTNAME")" "$("$DATE")" >> "$LOGFILE"
         printf '%s\n' "-----------------------------------------------------------------" >> "$LOGFILE"
         "$REBOOT"
@@ -345,7 +345,7 @@ case "$INPUT" in
     require_monitor_paths
     stop_protected_service
     verify_protected_service_stopped
-    reset_ufw
+    apply_ufw_defaults
     ;;
   health)
     require_setup

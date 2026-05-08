@@ -12,7 +12,7 @@ When enabled with `up`, the script stops the protected service, verifies it is d
 4. Allow DNS port 53 through the VPN tunnel
 5. Allow access to the configured local network
 
-When running in `check` mode, the monitor first stops the protected service, verifies it is down, then waits up to 180 seconds for OpenVPN, the tunnel interface, DNS, and the tunnel ping to be healthy, checking every 5 seconds. After readiness passes, it starts the protected `SERVICE`, then pings `CHECK_HOST` through `NET_TUN` on each monitor interval. If the check fails, it stops the protected service, verifies the service is stopped, resets UFW, logs the failure, and reboots. That is intentional killswitch behavior: if the VPN path fails, the host should not continue running in an unknown network state.
+When running in `check` mode, the monitor first stops the protected service, verifies it is down, then waits up to 180 seconds for OpenVPN, the tunnel interface, DNS, and the tunnel ping to be healthy, checking every 5 seconds. After readiness passes, it starts the protected `SERVICE`, then pings `CHECK_HOST` through `NET_TUN` on each monitor interval. If the check fails, it stops the protected service, verifies the service is stopped, reapplies deny-by-default UFW policy, logs the failure, and reboots. That is intentional killswitch behavior: if the VPN path fails, the host should not continue running in an unknown network state.
 
 OpenVPN readiness is checked through systemd, for example against `openvpn-client@ipvanish.service`, but the script does not start, stop, or restart OpenVPN. Recovery relies on rebooting into a clean service/firewall state instead of controlling OpenVPN inside the failure loop.
 
@@ -82,7 +82,7 @@ sudo ./killswitch.sh guard
 sudo ./killswitch.sh install
 ```
 
-`down` disables UFW entirely. This restores normal networking, but it also removes firewall protection until UFW is enabled again.
+`down` stops the protected service and reapplies deny-by-default UFW policy. It does not intentionally open the firewall.
 
 `up` and `check` call the same readiness guard before continuing. The guard waits up to `READINESS_TIMEOUT` seconds, retrying every `WAIT_INTERVAL` seconds, until the configured OpenVPN service is active, the configured tunnel interface exists, DNS resolves `CHECK_HOST`, and `CHECK_HOST` responds through the tunnel.
 
