@@ -2,10 +2,8 @@
 #
 # /usr/sbin/killswitch.sh
 #
-# Copyright (C) 2018 Free Software Foundation, Inc.
-# This is free software.  You may redistribute copies of it under the terms of
-# the GNU General Public License .
-# There is NO WARRANTY, to the extent permitted by law.
+# Copyright (C) 2018-2026 Victor T. Chevalier
+# SPDX-License-Identifier: GPL-3.0-only
 #
 # Written by Victor T. Chevalier
 #
