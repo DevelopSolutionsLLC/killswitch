@@ -17,11 +17,12 @@ NET_DEV="eth0"                        # Physical network interface
 LOCAL_NET="192.168.0.0/24"            # Local network subnet
 NET_TUN="tun0"                        # VPN tunnel interface
 PORT=443                              # Port used by the VPN connection
-SERVICE="apache2"                     # Protected service stopped on VPN loss
+SERVICE="deluged"                     # Protected service stopped on VPN loss
 OPENVPN_SERVICE="openvpn-client@ipvanish.service"
 CHECK_HOST="google.com"               # Connectivity check host
 CHECK_INTERVAL=60                     # Seconds between checks
 WAIT_INTERVAL=5                       # Seconds between readiness checks
+READINESS_TIMEOUT=180                 # Seconds to wait for VPN readiness
 LOGFILE="/var/log/killswitch/vpn.log" # Log file location
 
 # Installation targets
@@ -32,6 +33,7 @@ SERVICE_FILE="/etc/systemd/system/killswitch.service"
 UFW="/usr/sbin/ufw"
 IP="/usr/sbin/ip"
 PING="/usr/bin/ping"
+GETENT="/usr/bin/getent"
 SYSTEMCTL="/usr/bin/systemctl"
 REBOOT="/usr/sbin/reboot"
 MKDIR="/usr/bin/mkdir"
@@ -48,11 +50,11 @@ info()
   printf '%s\n\n' "Usage: killswitch.sh up/down/check/health/guard/install"
   printf '%s\n\n' "killswitch.sh configures ufw based on variables in the script."
   printf '%s\n' "Options:"
-  printf '%s\n' "  up       waits for VPN readiness and configures ufw"
+  printf '%s\n' "  up       waits for VPN readiness, configures ufw, and starts the protected service"
   printf '%s\n' "  down     stops the protected service and resets ufw"
   printf '%s\n' "  check    waits for VPN readiness, then monitors and reboots on failure"
-  printf '%s\n' "  health   checks OpenVPN, tunnel interface, and tunnel ping once"
-  printf '%s\n' "  guard    waits until OpenVPN, tunnel interface, and tunnel ping are ready"
+  printf '%s\n' "  health   checks OpenVPN, tunnel interface, DNS, and tunnel ping once"
+  printf '%s\n' "  guard    waits until OpenVPN, tunnel interface, DNS, and tunnel ping are ready"
   printf '%s\n' "  install  installs the script and systemd monitor service"
   printf '\n%s\n' "An argument must be provided or you will receive this message."
 }
@@ -112,6 +114,7 @@ require_guard_paths()
     "$UFW" ufw \
     "$IP" iproute2 \
     "$PING" iputils-ping \
+    "$GETENT" libc-bin \
     "$SYSTEMCTL" systemd \
     "$SLEEP" coreutils
 }
@@ -153,6 +156,11 @@ tunnel_is_up()
   "$PING" -c 1 -I "$NET_TUN" "$CHECK_HOST" >/dev/null 2>&1
 }
 
+dns_is_ready()
+{
+  "$GETENT" hosts "$CHECK_HOST" >/dev/null 2>&1
+}
+
 tunnel_interface_exists()
 {
   "$IP" link show dev "$NET_TUN" >/dev/null 2>&1
@@ -167,22 +175,24 @@ health_check()
 {
   openvpn_is_active || fail "OpenVPN service is not active: $OPENVPN_SERVICE"
   tunnel_interface_exists || fail "Tunnel interface is not present: $NET_TUN"
+  dns_is_ready || fail "DNS lookup failed: $CHECK_HOST"
   tunnel_is_up || fail "Tunnel ping failed: $CHECK_HOST via $NET_TUN"
 }
 
 guard_vpn()
 {
-  while ! openvpn_is_active; do
+  ELAPSED=0
+
+  while [ "$ELAPSED" -lt "$READINESS_TIMEOUT" ]; do
+    if openvpn_is_active && tunnel_interface_exists && dns_is_ready && tunnel_is_up; then
+      return 0
+    fi
+
     "$SLEEP" "$WAIT_INTERVAL"
+    ELAPSED=$((ELAPSED + WAIT_INTERVAL))
   done
 
-  while ! tunnel_interface_exists; do
-    "$SLEEP" "$WAIT_INTERVAL"
-  done
-
-  while ! tunnel_is_up; do
-    "$SLEEP" "$WAIT_INTERVAL"
-  done
+  fail "VPN readiness failed after ${READINESS_TIMEOUT}s: $OPENVPN_SERVICE, $NET_TUN, DNS, or tunnel ping is not ready"
 }
 
 reset_ufw()
@@ -194,6 +204,13 @@ stop_protected_service()
 {
   if [ -n "$SERVICE" ]; then
     "$SYSTEMCTL" stop "$SERVICE" || fail "Could not stop protected service: $SERVICE"
+  fi
+}
+
+start_protected_service()
+{
+  if [ -n "$SERVICE" ]; then
+    "$SYSTEMCTL" start "$SERVICE" || fail "Could not start protected service: $SERVICE"
   fi
 }
 
@@ -215,7 +232,6 @@ EOF
 
   "$CAT" >> "$SERVICE_FILE" <<EOF
 After=$OPENVPN_SERVICE
-Wants=$OPENVPN_SERVICE
 EOF
 
   "$CAT" >> "$SERVICE_FILE" <<EOF
@@ -276,12 +292,15 @@ case "$INPUT" in
     "$UFW" allow in on "$NET_DEV" from "$LOCAL_NET" to any
 
     "$UFW" --force enable
+    health_check
+    start_protected_service
     ;;
   check)
     require_setup
     require_monitor_paths
     ensure_log_dir
     guard_vpn
+    start_protected_service
 
     while true; do
       if ! tunnel_is_up; then
