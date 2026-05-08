@@ -236,11 +236,11 @@ install_service()
   write_service_file
 
   "$SYSTEMCTL" daemon-reload || fail "Could not reload systemd"
-  "$SYSTEMCTL" enable --now killswitch.service || fail "Could not enable and start killswitch.service"
 
   printf '%s\n' "Installed $INSTALL_PATH"
   printf '%s\n' "Installed $SERVICE_FILE"
-  printf '%s\n' "Enabled and started killswitch.service"
+  printf '%s\n' "Reloaded systemd"
+  printf '%s\n' "Run 'systemctl enable --now killswitch.service' when you are ready to start monitoring"
 }
 
 INPUT=$1
