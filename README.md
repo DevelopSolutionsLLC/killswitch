@@ -44,6 +44,7 @@ NET_DEV="eth0"
 LOCAL_NET="192.168.0.0/24"
 NET_TUN="tun0"
 PORT=443
+VPN_ENDPOINT=""
 SERVICE="deluged"
 OPENVPN_SERVICE="openvpn-client@ipvanish.service"
 CHECK_HOST="google.com"
@@ -53,6 +54,8 @@ REQUIRE_UFW_IPV6="yes"
 ```
 
 Use `ip link` to confirm interface names on the target host.
+
+Set `VPN_ENDPOINT` to the VPN server IP address or hostname when it is stable. When set, the physical interface allows only that destination on `PORT`; when empty, the script allows any destination on the configured VPN port.
 
 On current Debian-family OpenVPN installs, client configs commonly map to systemd units such as `openvpn-client@ipvanish.service`. The installed killswitch service declares an `After=` relationship to that OpenVPN unit, then the script performs its own 180-second readiness guard before starting the protected service.
 

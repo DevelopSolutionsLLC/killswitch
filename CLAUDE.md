@@ -21,7 +21,7 @@ All runtime configuration is in variables at the top of `killswitch.sh`. `SETUP`
 
 Primary variables:
 
-- `NET_DEV`, `LOCAL_NET`, `NET_TUN`, and `PORT` define the network and firewall behavior.
+- `NET_DEV`, `LOCAL_NET`, `NET_TUN`, `PORT`, and optional `VPN_ENDPOINT` define the network and firewall behavior. When `VPN_ENDPOINT` is set, physical-interface VPN egress is pinned to that destination and port.
 - `SERVICE` is an optional protected service to stop while the VPN is down.
 - `OPENVPN_SERVICE` is required and identifies the systemd OpenVPN service checked for readiness, for example `openvpn-client@ipvanish.service`. The script checks and waits on this service but does not start, stop, or restart OpenVPN.
 - `CHECK_HOST`, `CHECK_INTERVAL`, `WAIT_INTERVAL`, and `READINESS_TIMEOUT` define health checking and readiness wait behavior.

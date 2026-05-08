@@ -17,6 +17,7 @@ NET_DEV="eth0"                        # Physical network interface
 LOCAL_NET="192.168.0.0/24"            # Local network subnet
 NET_TUN="tun0"                        # VPN tunnel interface
 PORT=443                              # Port used by the VPN connection
+VPN_ENDPOINT=""                       # Optional VPN server IP/host
 SERVICE="deluged"                     # Protected service stopped on VPN loss
 OPENVPN_SERVICE="openvpn-client@ipvanish.service"
 CHECK_HOST="google.com"               # Connectivity check host
@@ -216,6 +217,17 @@ apply_ufw_defaults()
   "$UFW" reload
 }
 
+allow_vpn_endpoint()
+{
+  if [ -n "$VPN_ENDPOINT" ]; then
+    "$UFW" allow out on "$NET_DEV" to "$VPN_ENDPOINT" port "$PORT"
+    "$UFW" allow in on "$NET_DEV" from "$VPN_ENDPOINT" port "$PORT"
+  else
+    "$UFW" allow out on "$NET_DEV" to any port "$PORT"
+    "$UFW" allow in on "$NET_DEV" from any port "$PORT"
+  fi
+}
+
 stop_protected_service()
 {
   if [ -n "$SERVICE" ]; then
@@ -305,8 +317,7 @@ case "$INPUT" in
     "$UFW" allow out on "$NET_TUN"
     "$UFW" allow in on "$NET_TUN"
 
-    "$UFW" allow out on "$NET_DEV" to any port "$PORT"
-    "$UFW" allow in on "$NET_DEV" from any port "$PORT"
+    allow_vpn_endpoint
 
     "$UFW" allow out on "$NET_TUN" to any port 53
     "$UFW" allow in on "$NET_TUN" to any port 53
