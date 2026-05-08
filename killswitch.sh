@@ -21,6 +21,7 @@ SERVICE="apache2"                     # Protected service stopped on VPN loss
 OPENVPN_SERVICE="openvpn-client@ipvanish.service"
 CHECK_HOST="google.com"               # Connectivity check host
 CHECK_INTERVAL=60                     # Seconds between checks
+WAIT_INTERVAL=5                       # Seconds between readiness checks
 LOGFILE="/var/log/killswitch/vpn.log" # Log file location
 
 # Installation targets
@@ -103,24 +104,24 @@ require_paths()
   fi
 }
 
-require_firewall_paths()
-{
-  require_paths "$UFW" ufw "$IP" iproute2 "$PING" iputils-ping
-}
-
-require_monitor_paths()
+require_guard_paths()
 {
   require_paths \
     "$UFW" ufw \
     "$IP" iproute2 \
     "$PING" iputils-ping \
+    "$SYSTEMCTL" systemd \
+    "$SLEEP" coreutils
+}
+
+require_monitor_paths()
+{
+  require_guard_paths
+  require_paths \
     "$REBOOT" systemd \
     "$MKDIR" coreutils \
     "$HOSTNAME" hostname \
-    "$DATE" coreutils \
-    "$SLEEP" coreutils
-
-  require_paths "$SYSTEMCTL" systemd
+    "$DATE" coreutils
 }
 
 require_install_paths()
@@ -148,6 +149,38 @@ ensure_log_dir()
 tunnel_is_up()
 {
   "$PING" -c 1 -I "$NET_TUN" "$CHECK_HOST" >/dev/null 2>&1
+}
+
+tunnel_interface_exists()
+{
+  "$IP" link show dev "$NET_TUN" >/dev/null 2>&1
+}
+
+openvpn_is_active()
+{
+  "$SYSTEMCTL" is-active --quiet "$OPENVPN_SERVICE"
+}
+
+health_check()
+{
+  openvpn_is_active || fail "OpenVPN service is not active: $OPENVPN_SERVICE"
+  tunnel_interface_exists || fail "Tunnel interface is not present: $NET_TUN"
+  tunnel_is_up || fail "Tunnel ping failed: $CHECK_HOST via $NET_TUN"
+}
+
+guard_vpn()
+{
+  while ! openvpn_is_active; do
+    "$SLEEP" "$WAIT_INTERVAL"
+  done
+
+  while ! tunnel_interface_exists; do
+    "$SLEEP" "$WAIT_INTERVAL"
+  done
+
+  while ! tunnel_is_up; do
+    "$SLEEP" "$WAIT_INTERVAL"
+  done
 }
 
 reset_ufw()
@@ -220,7 +253,8 @@ fi
 case "$INPUT" in
   up)
     require_setup
-    require_firewall_paths
+    require_guard_paths
+    guard_vpn
 
     reset_ufw
 
@@ -245,6 +279,7 @@ case "$INPUT" in
     require_setup
     require_monitor_paths
     ensure_log_dir
+    guard_vpn
 
     while true; do
       if ! tunnel_is_up; then
@@ -264,6 +299,16 @@ case "$INPUT" in
     stop_protected_service
     verify_protected_service_stopped
     reset_ufw
+    ;;
+  health)
+    require_setup
+    require_guard_paths
+    health_check
+    ;;
+  guard)
+    require_setup
+    require_guard_paths
+    guard_vpn
     ;;
   install)
     require_setup
