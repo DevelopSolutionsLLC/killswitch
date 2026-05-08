@@ -4,7 +4,7 @@ A configurable OpenVPN killswitch for Debian-family Linux systems. It uses UFW t
 
 ## Behavior
 
-When enabled with `up`, the script stops the protected service, verifies it is down, waits up to 180 seconds for OpenVPN readiness, configures UFW, verifies readiness again under the firewall rules, then starts the protected service. UFW is configured to:
+`up` follows a strict leak-prevention order: stop the protected service, verify it is down, wait up to 180 seconds for VPN readiness, configure UFW, verify readiness again under the firewall rules, then start the protected service. UFW is configured to:
 
 1. Deny inbound and outbound traffic by default
 2. Allow traffic through the VPN tunnel interface, such as `tun0`
@@ -12,7 +12,7 @@ When enabled with `up`, the script stops the protected service, verifies it is d
 4. Allow DNS port 53 through the VPN tunnel
 5. Allow access to the configured local network
 
-When running in `check` mode, the monitor first stops the protected service, verifies it is down, then waits up to 180 seconds for OpenVPN, the tunnel interface, DNS, and the tunnel ping to be healthy, checking every 5 seconds. After readiness passes, it starts the protected `SERVICE`, then pings `CHECK_HOST` through `NET_TUN` on each monitor interval. If the check fails, it stops the protected service, verifies the service is stopped, restarts the configured OpenVPN systemd service up to `OPENVPN_RESTART_ATTEMPTS` times, and starts the protected service again only if readiness returns. If recovery does not succeed, it reapplies deny-by-default UFW policy, logs the failure, and reboots. That is intentional killswitch behavior: if the VPN path cannot be restored safely, the host should not continue running in an unknown network state.
+`check` uses the same safe startup flow, then monitors `CHECK_HOST` through `NET_TUN` every `CHECK_INTERVAL` seconds. If the check fails, it stops the protected service, verifies it is down, restarts the configured OpenVPN systemd service up to `OPENVPN_RESTART_ATTEMPTS` times, and starts the protected service again only if readiness returns. If recovery fails, it reapplies deny-by-default UFW policy, logs the failure, and reboots.
 
 OpenVPN readiness and recovery are handled through systemd, for example against `openvpn-client@ipvanish.service`. The script does not use direct `pkill` or `openvpn --daemon` control.
 
@@ -67,13 +67,13 @@ When `REQUIRE_UFW_IPV6="yes"`, the script requires `/etc/default/ufw` to contain
 ## Usage
 
 ```sh
-# Activate the firewall killswitch rules and start the protected service
+# Configure UFW, verify VPN, and start the protected service
 sudo ./killswitch.sh up
 
-# Disable UFW and restore normal networking
+# Stop the protected service and keep UFW deny-by-default
 sudo ./killswitch.sh down
 
-# Run the monitor in the foreground
+# Start safely, then monitor VPN health
 sudo ./killswitch.sh check
 
 # Check VPN readiness once
@@ -86,7 +86,7 @@ sudo ./killswitch.sh guard
 sudo ./killswitch.sh install
 ```
 
-`down` stops the protected service and reapplies deny-by-default UFW policy. It does not intentionally open the firewall.
+`down` stops the protected service and reapplies deny-by-default UFW policy. It does not intentionally open the firewall or restore normal networking.
 
 `up` and `check` call the same readiness guard before continuing. The guard waits up to `READINESS_TIMEOUT` seconds, retrying every `WAIT_INTERVAL` seconds, until the configured OpenVPN service is active, the configured tunnel interface exists, DNS resolves `CHECK_HOST`, and `CHECK_HOST` responds through the tunnel.
 

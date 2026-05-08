@@ -11,13 +11,15 @@
 #
 # Designed for use with OpenVPN on Debian-family Linux distributions.
 #
-# User configuration
+# Network configuration
 SETUP="no"                            # Change to yes after updating script
 NET_DEV="eth0"                        # Physical network interface
 LOCAL_NET="192.168.0.0/24"            # Local network subnet
 NET_TUN="tun0"                        # VPN tunnel interface
 PORT=443                              # Port used by the VPN connection
 VPN_ENDPOINT=""                       # Optional VPN server IP/host
+
+# Service and health configuration
 SERVICE="deluged"                     # Protected service stopped on VPN loss
 OPENVPN_SERVICE="openvpn-client@ipvanish.service"
 CHECK_HOST="google.com"               # Connectivity check host
@@ -53,14 +55,14 @@ ID="/usr/bin/id"
 info()
 {
   printf '%s\n\n' "Usage: killswitch.sh up/down/check/health/guard/install"
-  printf '%s\n\n' "killswitch.sh configures ufw based on variables in the script."
+  printf '%s\n\n' "killswitch.sh guards a protected service behind OpenVPN and UFW."
   printf '%s\n' "Options:"
-  printf '%s\n' "  up       waits for VPN readiness, configures ufw, and starts the protected service"
-  printf '%s\n' "  down     stops the protected service and resets ufw"
-  printf '%s\n' "  check    waits for VPN readiness, then monitors and reboots on failure"
+  printf '%s\n' "  up       configure UFW, verify VPN, then start the protected service"
+  printf '%s\n' "  down     stop the protected service and keep UFW deny-by-default"
+  printf '%s\n' "  check    start safely, monitor VPN, recover or reboot on failure"
   printf '%s\n' "  health   checks OpenVPN, tunnel interface, DNS, and tunnel ping once"
   printf '%s\n' "  guard    waits until OpenVPN, tunnel interface, DNS, and tunnel ping are ready"
-  printf '%s\n' "  install  installs the script and systemd monitor service"
+  printf '%s\n' "  install  install the script and systemd monitor service"
   printf '\n%s\n' "An argument must be provided or you will receive this message."
 }
 
@@ -210,6 +212,11 @@ guard_vpn()
   return 1
 }
 
+wait_for_vpn_or_fail()
+{
+  guard_vpn || fail "VPN readiness failed after ${READINESS_TIMEOUT}s: $OPENVPN_SERVICE, $NET_TUN, DNS, or tunnel ping is not ready"
+}
+
 try_openvpn_recovery()
 {
   ATTEMPT=1
@@ -247,6 +254,24 @@ allow_vpn_endpoint()
   fi
 }
 
+configure_firewall()
+{
+  apply_ufw_defaults
+
+  "$UFW" allow out on "$NET_TUN"
+  "$UFW" allow in on "$NET_TUN"
+
+  allow_vpn_endpoint
+
+  "$UFW" allow out on "$NET_TUN" to any port 53
+  "$UFW" allow in on "$NET_TUN" to any port 53
+
+  "$UFW" allow out on "$NET_DEV" from any to "$LOCAL_NET"
+  "$UFW" allow in on "$NET_DEV" from "$LOCAL_NET" to any
+
+  "$UFW" reload
+}
+
 stop_protected_service()
 {
   if [ -n "$SERVICE" ]; then
@@ -268,6 +293,48 @@ verify_protected_service_stopped()
   fi
 }
 
+prepare_protected_start()
+{
+  stop_protected_service
+  verify_protected_service_stopped
+  verify_ufw_ipv6
+}
+
+start_protected_after_vpn()
+{
+  wait_for_vpn_or_fail
+  start_protected_service
+}
+
+recover_vpn_or_reboot()
+{
+  stop_protected_service
+  verify_protected_service_stopped
+
+  if try_openvpn_recovery; then
+    health_check
+    start_protected_service
+    printf '*** [OpenVPN recovery succeeded: %s @ %s] ***\n' "$("$HOSTNAME")" "$("$DATE")" >> "$LOGFILE"
+    printf '%s\n' "-----------------------------------------------------------------" >> "$LOGFILE"
+    return 0
+  fi
+
+  apply_ufw_defaults
+  printf '*** [VPN health failed, rebooting for OpenVPN recovery: %s @ %s] ***\n' "$("$HOSTNAME")" "$("$DATE")" >> "$LOGFILE"
+  printf '%s\n' "-----------------------------------------------------------------" >> "$LOGFILE"
+  "$REBOOT"
+}
+
+monitor_vpn()
+{
+  while true; do
+    if ! tunnel_is_up; then
+      recover_vpn_or_reboot
+    fi
+    "$SLEEP" "$CHECK_INTERVAL"
+  done
+}
+
 write_service_file()
 {
   "$CAT" > "$SERVICE_FILE" <<EOF
@@ -275,13 +342,7 @@ write_service_file()
 Description=OpenVPN UFW killswitch monitor
 After=network-online.target
 Wants=network-online.target
-EOF
-
-  "$CAT" >> "$SERVICE_FILE" <<EOF
 After=$OPENVPN_SERVICE
-EOF
-
-  "$CAT" >> "$SERVICE_FILE" <<EOF
 
 [Service]
 Type=simple
@@ -326,25 +387,9 @@ case "$INPUT" in
   up)
     require_setup
     require_guard_paths
-    stop_protected_service
-    verify_protected_service_stopped
-    verify_ufw_ipv6
-    guard_vpn || fail "VPN readiness failed after ${READINESS_TIMEOUT}s: $OPENVPN_SERVICE, $NET_TUN, DNS, or tunnel ping is not ready"
-
-    apply_ufw_defaults
-
-    "$UFW" allow out on "$NET_TUN"
-    "$UFW" allow in on "$NET_TUN"
-
-    allow_vpn_endpoint
-
-    "$UFW" allow out on "$NET_TUN" to any port 53
-    "$UFW" allow in on "$NET_TUN" to any port 53
-
-    "$UFW" allow out on "$NET_DEV" from any to "$LOCAL_NET"
-    "$UFW" allow in on "$NET_DEV" from "$LOCAL_NET" to any
-
-    "$UFW" reload
+    prepare_protected_start
+    wait_for_vpn_or_fail
+    configure_firewall
     health_check
     start_protected_service
     ;;
@@ -352,31 +397,9 @@ case "$INPUT" in
     require_setup
     require_monitor_paths
     ensure_log_dir
-    stop_protected_service
-    verify_protected_service_stopped
-    verify_ufw_ipv6
-    guard_vpn || fail "VPN readiness failed after ${READINESS_TIMEOUT}s: $OPENVPN_SERVICE, $NET_TUN, DNS, or tunnel ping is not ready"
-    start_protected_service
-
-    while true; do
-      if ! tunnel_is_up; then
-        stop_protected_service
-        verify_protected_service_stopped
-        if try_openvpn_recovery; then
-          health_check
-          start_protected_service
-          printf '*** [OpenVPN recovery succeeded: %s @ %s] ***\n' "$("$HOSTNAME")" "$("$DATE")" >> "$LOGFILE"
-          printf '%s\n' "-----------------------------------------------------------------" >> "$LOGFILE"
-          "$SLEEP" "$CHECK_INTERVAL"
-          continue
-        fi
-        apply_ufw_defaults
-        printf '*** [VPN health failed, rebooting for OpenVPN recovery: %s @ %s] ***\n' "$("$HOSTNAME")" "$("$DATE")" >> "$LOGFILE"
-        printf '%s\n' "-----------------------------------------------------------------" >> "$LOGFILE"
-        "$REBOOT"
-      fi
-      "$SLEEP" "$CHECK_INTERVAL"
-    done
+    prepare_protected_start
+    start_protected_after_vpn
+    monitor_vpn
     ;;
   down)
     require_setup
@@ -393,7 +416,7 @@ case "$INPUT" in
   guard)
     require_setup
     require_guard_paths
-    guard_vpn || fail "VPN readiness failed after ${READINESS_TIMEOUT}s: $OPENVPN_SERVICE, $NET_TUN, DNS, or tunnel ping is not ready"
+    wait_for_vpn_or_fail
     ;;
   install)
     require_setup
