@@ -45,13 +45,15 @@ ID="/usr/bin/id"
 
 info()
 {
-  printf '%s\n\n' "Usage: killswitch.sh up/down/check/install"
+  printf '%s\n\n' "Usage: killswitch.sh up/down/check/health/guard/install"
   printf '%s\n\n' "killswitch.sh configures ufw based on variables in the script."
   printf '%s\n' "Options:"
-  printf '%s\n' "  up       configures ufw based on the VPN device"
-  printf '%s\n' "  down     disables ufw and restores normal networking"
-  printf '%s\n' "  check    monitors the VPN and restarts OpenVPN if needed"
-  printf '%s\n' "  install  installs, enables, and starts the systemd monitor service"
+  printf '%s\n' "  up       waits for VPN readiness and configures ufw"
+  printf '%s\n' "  down     stops the protected service and resets ufw"
+  printf '%s\n' "  check    waits for VPN readiness, then monitors and reboots on failure"
+  printf '%s\n' "  health   checks OpenVPN, tunnel interface, and tunnel ping once"
+  printf '%s\n' "  guard    waits until OpenVPN, tunnel interface, and tunnel ping are ready"
+  printf '%s\n' "  install  installs the script and systemd monitor service"
   printf '\n%s\n' "An argument must be provided or you will receive this message."
 }
 

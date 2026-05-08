@@ -12,9 +12,9 @@ When enabled with `up`, the script configures UFW to:
 4. Allow DNS port 53 through the VPN tunnel
 5. Allow access to the configured local network
 
-When running in `check` mode, the monitor pings `CHECK_HOST` through `NET_TUN`. If that check fails, it stops the protected `SERVICE` when configured, disables UFW, waits for the physical interface to have an IPv4 address, restarts OpenVPN, re-enables UFW, and then restarts the protected service. If UFW cannot be disabled during recovery and still reports active, the script forces a reboot. That is intentional killswitch behavior: if the VPN/firewall recovery path fails, the host should not continue running in an unknown network state.
+When running in `check` mode, the monitor first waits for OpenVPN, the tunnel interface, and the tunnel ping to be healthy. After that, it pings `CHECK_HOST` through `NET_TUN`. If the check fails, it stops the protected `SERVICE` when configured, verifies the protected service is stopped, resets UFW, logs the failure, and reboots. That is intentional killswitch behavior: if the VPN path fails, the host should not continue running in an unknown network state.
 
-OpenVPN is restarted through systemd, for example `systemctl restart openvpn-client@ipvanish.service`.
+OpenVPN readiness is checked through systemd, for example against `openvpn-client@ipvanish.service`. Recovery relies on rebooting into a clean service/firewall state instead of restarting OpenVPN inside the failure loop.
 
 DNS is intentionally limited to the VPN tunnel. The killswitch does not allow pre-tunnel DNS fallback because that can leak host lookups outside the VPN path.
 
@@ -46,6 +46,7 @@ PORT=443
 SERVICE="apache2"
 OPENVPN_SERVICE="openvpn-client@ipvanish.service"
 CHECK_HOST="google.com"
+WAIT_INTERVAL=5
 ```
 
 Use `ip link` to confirm interface names on the target host.
@@ -66,19 +67,27 @@ sudo ./killswitch.sh down
 # Run the monitor in the foreground
 sudo ./killswitch.sh check
 
-# Install, enable, and start the systemd monitor service
+# Check VPN readiness once
+sudo ./killswitch.sh health
+
+# Wait until VPN readiness checks pass
+sudo ./killswitch.sh guard
+
+# Install the systemd monitor service
 sudo ./killswitch.sh install
 ```
 
 `down` disables UFW entirely. This restores normal networking, but it also removes firewall protection until UFW is enabled again.
 
+`up` and `check` call the same readiness guard before continuing. The guard waits until the configured OpenVPN service is active, the configured tunnel interface exists, and `CHECK_HOST` responds through the tunnel.
+
 `install` copies the configured script to `/usr/sbin/killswitch.sh`, writes `/etc/systemd/system/killswitch.service`, reloads systemd, and runs:
 
 ```sh
-systemctl enable --now killswitch.service
+systemctl daemon-reload
 ```
 
-`install` starts the monitor service only. Run `sudo ./killswitch.sh up` separately when you are ready to activate the firewall rules.
+`install` does not enable or start the service. Run `sudo ./killswitch.sh up` separately when you are ready to activate the firewall rules, then run `sudo systemctl enable --now killswitch.service` when you are ready for the monitor to run persistently.
 
 ## License
 
