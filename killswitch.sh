@@ -21,7 +21,6 @@ SERVICE="apache2"                     # Protected service stopped on VPN loss
 OPENVPN_SERVICE="openvpn-client@ipvanish.service"
 CHECK_HOST="google.com"               # Connectivity check host
 CHECK_INTERVAL=60                     # Seconds between checks
-RECONNECT_DELAY=30                    # Seconds to wait after reconnecting
 LOGFILE="/var/log/killswitch/vpn.log" # Log file location
 
 # Installation targets
@@ -34,7 +33,6 @@ IP="/usr/sbin/ip"
 PING="/usr/bin/ping"
 SYSTEMCTL="/usr/bin/systemctl"
 REBOOT="/usr/sbin/reboot"
-GREP="/usr/bin/grep"
 MKDIR="/usr/bin/mkdir"
 HOSTNAME="/usr/bin/hostname"
 DATE="/usr/bin/date"
@@ -117,7 +115,6 @@ require_monitor_paths()
     "$IP" iproute2 \
     "$PING" iputils-ping \
     "$REBOOT" systemd \
-    "$GREP" grep \
     "$MKDIR" coreutils \
     "$HOSTNAME" hostname \
     "$DATE" coreutils \
@@ -153,14 +150,23 @@ tunnel_is_up()
   "$PING" -c 1 -I "$NET_TUN" "$CHECK_HOST" >/dev/null 2>&1
 }
 
-network_is_ready()
+reset_ufw()
 {
-  "$IP" -4 addr show dev "$NET_DEV" 2>/dev/null | "$GREP" -q 'inet '
+  "$UFW" --force reset
 }
 
-restart_openvpn()
+stop_protected_service()
 {
-  "$SYSTEMCTL" restart "$OPENVPN_SERVICE"
+  if [ -n "$SERVICE" ]; then
+    "$SYSTEMCTL" stop "$SERVICE" || fail "Could not stop protected service: $SERVICE"
+  fi
+}
+
+verify_protected_service_stopped()
+{
+  if [ -n "$SERVICE" ] && "$SYSTEMCTL" is-active --quiet "$SERVICE"; then
+    fail "Protected service is still active: $SERVICE"
+  fi
 }
 
 write_service_file()
@@ -216,6 +222,8 @@ case "$INPUT" in
     require_setup
     require_firewall_paths
 
+    reset_ufw
+
     "$UFW" default deny outgoing
     "$UFW" default deny incoming
 
@@ -240,42 +248,22 @@ case "$INPUT" in
 
     while true; do
       if ! tunnel_is_up; then
-        if [ -n "$SERVICE" ]; then
-          "$SYSTEMCTL" stop "$SERVICE"
-        fi
-
-        printf '*** [Restarting openvpn: %s @ %s] ***\n' "$("$HOSTNAME")" "$("$DATE")" >> "$LOGFILE"
-
-        while ! tunnel_is_up; do
-          "$UFW" disable
-
-          if "$UFW" status | "$GREP" -q '^Status: active'; then
-            "$REBOOT"
-          fi
-
-          while ! network_is_ready; do
-            # waiting for the physical interface to receive an IPv4 address
-            "$SLEEP" 60
-          done
-
-          restart_openvpn
-          "$SLEEP" "$RECONNECT_DELAY"
-          "$UFW" --force enable
-        done
-
-        if [ -n "$SERVICE" ]; then
-          "$SYSTEMCTL" start "$SERVICE"
-        fi
-
+        stop_protected_service
+        verify_protected_service_stopped
+        reset_ufw
+        printf '*** [VPN health failed, rebooting for OpenVPN recovery: %s @ %s] ***\n' "$("$HOSTNAME")" "$("$DATE")" >> "$LOGFILE"
         printf '%s\n' "-----------------------------------------------------------------" >> "$LOGFILE"
+        "$REBOOT"
       fi
       "$SLEEP" "$CHECK_INTERVAL"
     done
     ;;
   down)
     require_setup
-    require_firewall_paths
-    "$UFW" disable
+    require_monitor_paths
+    stop_protected_service
+    verify_protected_service_stopped
+    reset_ufw
     ;;
   install)
     require_setup
